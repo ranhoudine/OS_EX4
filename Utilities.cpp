@@ -53,30 +53,36 @@ uint64_t find_next_available_frame (const uint64_t &calling_frame, const uint64_
   uint64_t zero = 0;
   uint64_t farthest_father_pm = 0;
   uint64_t farthest_page_offset = 0;
+  uint64_t evicted_page = 0;
   static int number_of_calls = 0;
   static uint64_t max_pm_index_frame_static = 0;
+  word_t ram00;
+  PMread(0, &ram00); //todo remov
   number_of_calls++;
   dfs (calling_frame, page_swapped_in,
        zero, (uint8_t) 0,
        zero, &empty_frame,
        &max_pm_index_frame, &max_cyc_dist,
        &farthest_father_pm,
-       &farthest_page_offset);
+       &farthest_page_offset, &evicted_page);
   max_pm_index_frame_static = max_pm_index_frame;
   if (empty_frame)
     return empty_frame;
   if (max_pm_index_frame < NUM_FRAMES - 1)
     return max_pm_index_frame + 1;
+
+  // Case we evict a page
   word_t freed_frame_pm;
-  PMread (pm_address (farthest_father_pm, farthest_father_pm), &freed_frame_pm);
-  PMwrite (  (farthest_father_pm, farthest_page_offset), 0);
+  PMread (pm_address (farthest_father_pm, farthest_page_offset), &freed_frame_pm);
+  PMevict (freed_frame_pm, evicted_page);
+  PMwrite (  pm_address(farthest_father_pm, farthest_page_offset), 0);
   return freed_frame_pm;
 }
 
 bool is_frame_nullified (uint64_t frame)
 {
   word_t child;
-  for (uint64_t offset = 0; offset < OFFSET_WIDTH; ++offset)
+  for (uint64_t offset = 0; offset < PAGE_SIZE; ++offset)
   {
     PMread (pm_address (frame, offset), &child);
     if (child != 0)
@@ -100,7 +106,7 @@ void dfs (const uint64_t &calling_frame, const uint64_t &page_swapped_in_vm,
   uint64_t dep = TABLES_DEPTH; // todo debugging
   if (level == TABLES_DEPTH)
   {
-    // TABLE THAT POINT AT LEAVES
+    // TABLE THAT POINTS AT LEAVES
     run_over_leaves (page_swapped_in_vm, cur_frame_pm,
                      way_to_page_vm, max_pm_index_frame,
                      max_cyc_dist, farthest_father_pm,
@@ -145,8 +151,12 @@ void run_over_leaves (const uint64_t &page_swapped_in_vm, uint64_t cur_frame_pm,
   for (uint64_t leaf = 0; leaf < PAGE_SIZE; ++leaf)
   {
     PMread (pm_address (cur_frame_pm, leaf), &child_pm);
+//    if (child_pm > *max_pm_index_frame)
+//      *max_pm_index_frame = child_pm;
+
     if (child_pm > *max_pm_index_frame)
       *max_pm_index_frame = child_pm;
+
     if (child_pm != 0)
     {
       cyc_dist = calculate_cyc_dist (page_swapped_in_vm, concatenate (way_to_page_vm, leaf));
@@ -174,9 +184,9 @@ uint64_t concatenate (uint64_t way_to_page, uint64_t offset)
 
 void nullify_frame (uint64_t frame)
 {
-  for (int i = 0; i < OFFSET_WIDTH; ++i)
+  for (int i = 0; i < PAGE_SIZE; ++i)
   {
-    PMwrite (pm_address (0, i), 0);
+    PMwrite (pm_address (frame, i), 0);
   }
 }
 
@@ -197,13 +207,37 @@ uint64_t get_to_frame(uint64_t virtual_address){
     PMread (pm_address (frame, offset), &pm_cell_content);
     if (pm_cell_content == 0)
     {
-      auto next_frame = (word_t) find_next_available_frame (frame, page_to_read);
+      // New Table Creation
+      restore_page = true;
+      next_frame = (word_t) find_next_available_frame (frame, page_to_read);
       nullify_frame (next_frame);
-      PMwrite (pm_address (frame, offset), next_frame);
-      pm_cell_content = next_frame;
+
+      if (i < TABLES_DEPTH -1){
+        std::cout << "Creating Table in frame: " << next_frame << std::endl; // todo remove
+        PMwrite (pm_address (frame, offset), next_frame);
+      }
     }
-    frame = pm_cell_content;
+    else // todo remove
+    {
+      next_frame = pm_cell_content;
+      std::cout << "Table exists in frame " << next_frame << std::endl;
+    }
+    prev_frame = (word_t) frame;
+    frame = next_frame;
   }
+
+  if (restore_page){
+    word_t ram00;
+    PMread(0, &ram00);
+    PMrestore(frame, get_page_of_virtual_address (virtual_address));
+    PMwrite(pm_address (prev_frame, offset), frame);
+    std::cout << "Inserting Page to frame: " << frame << std::endl;
+    PMread(0, &ram00);
+  }
+  else{
+    std::cout << "Page exists in frame: " << frame << std::endl;
+  }
+  frame = next_frame;
   return frame;
 }
 

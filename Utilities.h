@@ -51,12 +51,12 @@ void dfs (const uint64_t &calling_frame, const uint64_t &page_swapped_in_vm,
           uint64_t cur_frame_pm, uint8_t level, uint64_t way_to_page_vm,
           uint64_t *empty_frame, uint64_t *max_pm_index_frame,
           uint64_t *max_cyc_dist, uint64_t *farthest_father_pm,
-          uint64_t *farthest_page_offset);
+          uint64_t *farthest_page_offset, uint64_t *evicted_page);
 
 bool is_frame_nullified (uint64_t frame);
 
 void run_over_leaves (const uint64_t &page_swapped_in_vm, uint64_t cur_frame_pm,
                       uint64_t way_to_page_vm, uint64_t *max_pm_index_frame,
                       uint64_t *max_cyc_dist, uint64_t *farthest_father_pm,
-                      uint64_t *farthest_page_offset);
+                      uint64_t *farthest_page_offset, uint64_t *evicted_page);
 #endif //_UTILITIES_H_
