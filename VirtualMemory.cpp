@@ -2,7 +2,6 @@
 // Created by ranho on 6/15/23.
 //
 #include "VirtualMemory.h"
-#include "MemoryConstants.h"
 #include "PhysicalMemory.h"
 #include "Utilities.h"
 
@@ -33,7 +32,7 @@ int VMread (uint64_t virtualAddress, word_t *value)
     return 0;
   offset = get_address_offset_in_level (virtualAddress, TABLES_DEPTH);
   PMread(pm_address (frame_to_read_from, offset), value);
-  return 1; // todo - what is a failure?
+  return 1;
 }
 
 /* Writes a word to the given virtual address.
@@ -47,10 +46,13 @@ int VMwrite (uint64_t virtualAddress, word_t value)
   // pseudocode: look for the physical address of the page. if found - write value into the required cell within it. otherwise load page
   // from disk and do the same
   uint64_t offset;
-  uint64_t frame_to_write_to = get_to_leaf (virtualAddress);
+  if (!is_page_index_valid (virtualAddress)){
+    return 0;
+  }
+  uint64_t frame_to_write_to = get_frame_of_page (virtualAddress);
   if (frame_to_write_to >= NUM_FRAMES)
     return 0;
   offset = get_address_offset_in_level (virtualAddress, TABLES_DEPTH);
   PMwrite(pm_address (frame_to_write_to, offset), value);
-  return 1; // todo - what is a failure?
+  return 1;
 }

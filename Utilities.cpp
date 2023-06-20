@@ -54,18 +54,12 @@ uint64_t find_next_available_frame (const uint64_t &calling_frame, const uint64_
   uint64_t farthest_father_pm = 0;
   uint64_t farthest_page_offset = 0;
   uint64_t evicted_page = 0;
-  static int number_of_calls = 0;
-  static uint64_t max_pm_index_frame_static = 0;
-  word_t ram00;
-  PMread(0, &ram00); //todo remov
-  number_of_calls++;
   dfs (calling_frame, page_swapped_in,
        zero, (uint8_t) 0,
        zero, &empty_frame,
        &max_pm_index_frame, &max_cyc_dist,
        &farthest_father_pm,
        &farthest_page_offset, &evicted_page);
-  max_pm_index_frame_static = max_pm_index_frame;
   if (empty_frame)
     return empty_frame;
   if (max_pm_index_frame < NUM_FRAMES - 1)
@@ -75,20 +69,8 @@ uint64_t find_next_available_frame (const uint64_t &calling_frame, const uint64_
   word_t freed_frame_pm;
   PMread (pm_address (farthest_father_pm, farthest_page_offset), &freed_frame_pm);
   PMevict (freed_frame_pm, evicted_page);
-  PMwrite (  pm_address(farthest_father_pm, farthest_page_offset), 0);
+  PMwrite (pm_address (farthest_father_pm, farthest_page_offset), 0);
   return freed_frame_pm;
-}
-
-bool is_frame_nullified (uint64_t frame)
-{
-  word_t child;
-  for (uint64_t offset = 0; offset < PAGE_SIZE; ++offset)
-  {
-    PMread (pm_address (frame, offset), &child);
-    if (child != 0)
-      return false;
-  }
-  return true;
 }
 
 void dfs (const uint64_t &calling_frame, const uint64_t &page_swapped_in_vm,
@@ -113,8 +95,6 @@ void dfs (const uint64_t &calling_frame, const uint64_t &page_swapped_in_vm,
                      farthest_page_offset);
     return;
   }
-  uint64_t page_size = PAGE_SIZE; // todo debug
-  uint64_t tree_depth= TABLES_DEPTH;
   word_t frame_of_child;
   // Finding empty tables
   for (uint64_t offset = 0; offset < PAGE_SIZE; ++offset)
@@ -129,8 +109,8 @@ void dfs (const uint64_t &calling_frame, const uint64_t &page_swapped_in_vm,
         return;
       }
       dfs (calling_frame, page_swapped_in_vm,
-           (uint64_t) frame_of_child, level+1,
-           concatenate (way_to_page_vm, offset),
+           (uint64_t) frame_of_child, level + 1,
+           concatenate (way_to_page_vm, bit_block),
            empty_frame, max_pm_index_frame,
            max_cyc_dist, farthest_father_pm,
            farthest_page_offset);
@@ -159,7 +139,7 @@ void run_over_leaves (const uint64_t &page_swapped_in_vm, uint64_t cur_frame_pm,
 
     if (child_pm != 0)
     {
-      cyc_dist = calculate_cyc_dist (page_swapped_in_vm, concatenate (way_to_page_vm, leaf));
+      cyc_dist = calculate_cyc_dist (page_swapped_in_vm, concatenate (way_to_page_vm, bit_block));
       if (*max_cyc_dist < cyc_dist)
       {
         *max_cyc_dist = cyc_dist;
@@ -170,27 +150,12 @@ void run_over_leaves (const uint64_t &page_swapped_in_vm, uint64_t cur_frame_pm,
   }
 }
 
-uint64_t calculate_cyc_dist (const uint64_t &page_swapped_in, uint64_t leaf)
-{
-  uint64_t abs_dist_leaf_to_page = page_swapped_in - leaf >= 0 ? page_swapped_in - leaf : leaf - page_swapped_in;
-  if (NUM_PAGES - abs_dist_leaf_to_page > abs_dist_leaf_to_page)
-    return abs_dist_leaf_to_page;
-  return NUM_PAGES - abs_dist_leaf_to_page;
-}
-uint64_t concatenate (uint64_t way_to_page, uint64_t offset)
-{
-  return (way_to_page << OFFSET_WIDTH) | offset;
-}
-
-void nullify_frame (uint64_t frame)
-{
-  for (int i = 0; i < PAGE_SIZE; ++i)
-  {
-    PMwrite (pm_address (frame, i), 0);
-  }
-}
-
-uint64_t pm_address (uint64_t frame, uint64_t offset)
+/**
+ *
+ * @param virtual_address
+ * @return The index of the frame holding the page
+ */
+uint64_t get_frame_of_page (uint64_t virtual_address)
 {
   return frame * PAGE_SIZE + offset;
 }
@@ -209,36 +174,27 @@ uint64_t get_to_frame(uint64_t virtual_address){
     {
       // New Table Creation
       restore_page = true;
-      next_frame = (word_t) find_next_available_frame (frame, page_to_read);
-      nullify_frame (next_frame);
+      next_frame = (word_t) find_next_available_frame (prev_frame, page_to_read);
 
-      if (i < TABLES_DEPTH -1){
-        std::cout << "Creating Table in frame: " << next_frame << std::endl; // todo remove
-        PMwrite (pm_address (frame, offset), next_frame);
+      if (i < TABLES_DEPTH - 1)   // The last row of tables is not looking at tables
+      {         // New Table Creation
+        nullify_frame (next_frame);
+        PMwrite (pm_address (prev_frame, bit_block), next_frame);
       }
     }
-    else // todo remove
-    {
-      next_frame = pm_cell_content;
-      std::cout << "Table exists in frame " << next_frame << std::endl;
-    }
-    prev_frame = (word_t) frame;
-    frame = next_frame;
-  }
+    else
+      next_frame = frame_content;
 
-  if (restore_page){
-    word_t ram00;
-    PMread(0, &ram00);
-    PMrestore(frame, get_page_of_virtual_address (virtual_address));
-    PMwrite(pm_address (prev_frame, offset), frame);
-    std::cout << "Inserting Page to frame: " << frame << std::endl;
-    PMread(0, &ram00);
+    father_frame = (word_t) prev_frame;    // this is used only for the last iteration
+    prev_frame = next_frame;
   }
-  else{
-    std::cout << "Page exists in frame: " << frame << std::endl;
+  // Now next_fram and _prev_frame are both the index of the frame containing the page
+  if (restore_page)
+  {
+    PMrestore (next_frame, page_to_read);
+    PMwrite (pm_address (father_frame, bit_block), (word_t)next_frame);
   }
-  frame = next_frame;
-  return frame;
+  return next_frame;
 }
 
 /***
@@ -250,7 +206,8 @@ uint64_t get_to_frame(uint64_t virtual_address){
 uint64_t get_address_offset_in_level (uint64_t address, uint16_t tree_level)
 {
   unsigned int shift_levels = NUM_BLOCKS_IN_ADDRESS - 1 - tree_level;
-  uint64_t res = address >> (shift_levels * OFFSET_WIDTH);
+  uint64_t res = full_vm_address >> (shift_levels * OFFSET_WIDTH);
   res &= LEAST_SIGNIFICANT_PAGE_WIDTH_BITS_MASK;
   return res;
+
 }
